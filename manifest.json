@@ -1,0 +1,10 @@
+{
+  "name": "Task Helper (Local)",
+  "short_name": "TaskHelper",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#0B1D2A",
+  "theme_color": "#0B1D2A",
+  "icons": []
+}
+
