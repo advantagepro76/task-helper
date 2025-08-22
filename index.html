@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Task Helper (Local)</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0B1D2A">
+  <style>
+    :root { --bg:#0B1D2A; --card:#0f2434; --ink:#ffffff; --muted:#c7d2fe; --accent:#0D9488; --soft:#1b364a; }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
+    header{padding:16px 16px 8px;font-weight:700}
+    .wrap{max-width:760px;margin:0 auto;padding:12px}
+    .card{background:var(--card);border:1px solid #17324b;border-radius:16px;padding:16px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+    .row{display:flex;gap:8px}
+    input[type=text]{flex:1;padding:12px 14px;border-radius:12px;border:1px solid #274561;background:#0c1d29;color:var(--ink)}
+    button{border:0;border-radius:12px;padding:12px 14px;background:var(--accent);color:#00110f;font-weight:700;cursor:pointer}
+    button.ghost{background:#123244;color:#cfefff;border:1px solid #234b66}
+    button.slim{padding:8px 10px;border-radius:10px}
+    .pill{display:inline-flex;gap:8px;align-items:center;background:#103049;border:1px solid #214764;color:#cfe7ff;
+          padding:6px 10px;border-radius:999px;font-size:12px}
+    .list{margin-top:12px;display:grid;gap:8px}
+    .item{display:flex;justify-content:space-between;align-items:center;background:var(--soft);border:1px solid #1e3a55;border-radius:14px;padding:10px 12px}
+    .title{font-weight:600}
+    .meta{font-size:12px;opacity:.8}
+    .tabs{display:flex;gap:8px;margin:14px 0}
+    .tab{padding:10px 12px;border-radius:10px;background:#10273a;border:1px solid #21425d;color:#cfe7ff;cursor:pointer}
+    .tab.active{background:#0D9488;color:#00110f;border-color:#0D9488}
+    .bar{display:flex;gap:8px;flex-wrap:wrap}
+    dialog{border:0;border-radius:16px;background:#0f2434;color:#fff;max-width:560px}
+    dialog::backdrop{background:rgba(0,0,0,.5)}
+    .hint{font-size:12px;opacity:.75}
+  </style>
+</head>
+<body>
+  <header>Task Helper • Local Only</header>
+  <div class="wrap">
+    <div class="card">
+      <div class="bar" style="justify-content:space-between;align-items:center">
+        <span class="pill">Offline • On-device • Voice-ready</span>
+        <div class="bar">
+          <button class="ghost slim" id="installBtn" hidden>Install app</button>
+          <button class="ghost slim" id="exportBtn">Export CSV</button>
+        </div>
+      </div>
+
+      <div style="height:12px"></div>
+      <div class="row">
+        <input id="taskInput" type="text" placeholder='Try: "Three reels to make" or "Write script tomorrow"' />
+        <button id="voiceBtn" title="Voice input">🎤</button>
+        <button id="addBtn">Add</button>
+      </div>
+      <div class="hint" style="margin-top:6px">Tip: If your sentence contains “tomorrow”, due date auto-sets to tomorrow. Otherwise, it’s today.</div>
+
+      <div class="tabs">
+        <div class="tab active" data-tab="today">Today</div>
+        <div class="tab" data-tab="open">All Open</div>
+        <div class="tab" data-tab="done">History</div>
+      </div>
+      <div id="list" class="list"></div>
+    </div>
+  </div>
+
+  <dialog id="dash">
+    <div style="padding:18px">
+      <h3 style="margin:0 0 8px">Today’s Tasks</h3>
+      <div id="dashList" class="list"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+        <button class="ghost" id="dashClose">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+<script>
+/* --------- tiny local “store” --------- */
+const SKEY = "taskhelper.v1";
+const todayStr = () => new Date().toISOString().slice(0,10);
+const uid = () => Math.floor(100000 + Math.random()*900000).toString();
+
+function load() {
+  try { return JSON.parse(localStorage.getItem(SKEY) || '{"tasks":[], "lastDash":""}'); }
+  catch { return {tasks:[], lastDash:""} }
+}
+function save(state) { localStorage.setItem(SKEY, JSON.stringify(state)); }
+function addTask(title) {
+  const text = title.trim();
+  if (!text) return;
+  const lower = text.toLowerCase();
+  const due = lower.includes("tomorrow") ? dateOffset(1) : todayStr();
+  const t = { id: uid(), title: text, due, created: Date.now(), status:"open", done_ts:null };
+  const s = load(); s.tasks.push(t); save(s); return t;
+}
+function markDone(id) {
+  const s = load();
+  const t = s.tasks.find(x=>x.id===id);
+  if (t && t.status==="open"){ t.status="done"; t.done_ts=Date.now(); save(s); }
+}
+function reopen(id){
+  const s = load();
+  const t = s.tasks.find(x=>x.id===id);
+  if (t && t.status==="done"){ t.status="open"; t.done_ts=null; save(s); }
+}
+function dateOffset(d){
+  const dt = new Date(); dt.setDate(dt.getDate()+d);
+  return dt.toISOString().slice(0,10);
+}
+
+/* --------- UI helpers --------- */
+const listEl = document.getElementById('list');
+const tabs = [...document.querySelectorAll('.tab')];
+let activeTab = "today";
+
+function render(){
+  const s = load();
+  let items = [];
+  if (activeTab==="today"){
+    items = s.tasks.filter(t=>t.status==="open" && t.due===todayStr());
+  } else if (activeTab==="open"){
+    items = s.tasks.filter(t=>t.status==="open").sort((a,b)=>a.due.localeCompare(b.due));
+  } else {
+    items = s.tasks.filter(t=>t.status==="done").sort((a,b)=>b.done_ts-a.done_ts);
+  }
+  listEl.innerHTML = items.map(t => itemHTML(t)).join('') || `<div class="hint">Nothing here yet.</div>`;
+  attachItemEvents();
+}
+function itemHTML(t){
+  const meta = t.status==="done"
+    ? `Done • ${new Date(t.done_ts).toLocaleString()}`
+    : `Due ${t.due}`;
+  const btns = t.status==="done"
+    ? `<button class="ghost slim act" data-act="reopen" data-id="${t.id}">Reopen</button>`
+    : `<button class="ghost slim act" data-act="done" data-id="${t.id}">Mark done</button>`;
+  return `
+    <div class="item">
+      <div>
+        <div class="title">${escapeHTML(t.title)}</div>
+        <div class="meta">${meta}</div>
+      </div>
+      <div class="bar">${btns}</div>
+    </div>
+  `;
+}
+function attachItemEvents(){
+  document.querySelectorAll('.act').forEach(btn=>{
+    btn.onclick = () => {
+      const id = btn.dataset.id, act = btn.dataset.act;
+      if (act==="done") markDone(id); else reopen(id);
+      render();
+    }
+  });
+}
+function escapeHTML(s){ return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+/* --------- actions --------- */
+document.getElementById('addBtn').onclick = () => {
+  const inp = document.getElementById('taskInput');
+  addTask(inp.value); inp.value=""; render();
+};
+document.getElementById('exportBtn').onclick = () => {
+  const s = load(); 
+  const header = "id,title,due,created_ts,status,done_ts\n";
+  const rows = s.tasks.map(t => [
+    t.id,
+    '"' + t.title.replace(/"/g,'""') + '"',
+    t.due,
+    t.created,
+    t.status,
+    t.done_ts || ""
+  ].join(',')).join('\n');
+  const blob = new Blob([header + rows], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), {href:url, download:'tasks.csv'});
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 1000);
+};
+
+/* --------- tabs --------- */
+tabs.forEach(t=>{
+  t.onclick = () => {
+    tabs.forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    activeTab = t.dataset.tab;
+    render();
+  }
+});
+
+/* --------- voice input (Web Speech API) --------- */
+const voiceBtn = document.getElementById('voiceBtn');
+let rec;
+voiceBtn.onclick = () => {
+  try {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return alert("SpeechRecognition not supported on this browser.");
+    rec = new SR(); rec.lang = 'en-IN'; rec.interimResults = false; rec.maxAlternatives = 1;
+    rec.onresult = (e) => {
+      const text = e.results[0][0].transcript;
+      document.getElementById('taskInput').value = text;
+    };
+    rec.onerror = () => alert("Mic error. Check permissions.");
+    rec.start();
+  } catch(e){ alert("Mic not available."); }
+};
+
+/* --------- dashboard (once per day) --------- */
+const dash = document.getElementById('dash');
+document.getElementById('dashClose').onclick = () => dash.close();
+function maybeShowDashboard(){
+  const s = load();
+  if (s.lastDash === todayStr()) return; // already shown today
+  const todays = s.tasks.filter(t=>t.status==="open" && t.due===todayStr());
+  const dashList = document.getElementById('dashList');
+  if (todays.length === 0){ s.lastDash = todayStr(); save(s); return; }
+  dashList.innerHTML = todays.map(t => `
+    <div class="item">
+      <div>
+        <div class="title">${escapeHTML(t.title)}</div>
+        <div class="meta">Due ${t.due}</div>
+      </div>
+      <button class="ghost slim act" data-act="done" data-id="${t.id}">Mark done</button>
+    </div>`).join('');
+  dash.showModal();
+  s.lastDash = todayStr(); save(s);
+  attachItemEvents();
+}
+
+/* --------- PWA install prompt --------- */
+let deferredPrompt;
+const installBtn = document.getElementById('installBtn');
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); deferredPrompt = e; installBtn.hidden = false;
+});
+installBtn.onclick = async () => {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  await deferredPrompt.userChoice;
+  deferredPrompt = null; installBtn.hidden = true;
+};
+
+/* --------- boot --------- */
+render(); maybeShowDashboard();
+
+/* --------- service worker --------- */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+}
+</script>
+</body>
+</html>
